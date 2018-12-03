@@ -22,30 +22,57 @@ var (
 
 	anchorRegexp   = regexp.MustCompile(`<a\s[^>]*\bhref="([^">]+)"[^>]*>`)
 	anchorIdRegexp = regexp.MustCompile(`\bid="([^"]+)"`)
-	bboxRegexp     = regexp.MustCompile(`(?m)^([^,]+),([^,]+),([^,]+),([^,]+),([^,]+)$`)
+	bboxRegexp     = regexp.MustCompile(`(?m)^([^,\n]+),([^,\n]+),([^,\n]+),([^,\n]+),([^,\n]+)$`)
 )
 
+type PositionedObject struct {
+	// SVG ID
+	ID string
+
+	// X position of in pixels
+	X float64
+
+	// Y position of in pixels
+	Y float64
+
+	// Width of in pixels
+	W float64
+
+	// Height in pixels
+	H float64
+}
+
 type PositionedLink struct {
-	// SVG ID of this link
+	// SVG ID
 	ID string
 
 	// URL of the link
 	URL string
 
-	// X position of the link in pixels
+	// X position of in pixels
 	X float64
 
-	// Y position of the link in pixels
+	// Y position of in pixels
 	Y float64
 
-	// Width of the link in pixels
+	// Width of in pixels
 	W float64
 
-	// Height of the link in pixels
+	// Height in pixels
 	H float64
 
 	// Valid indicates if this link has all the requirements to be used
 	Valid bool
+}
+
+// BareFragment returns the ID portion of the URL, if the URL starts with #
+// otherwise returns the empty string
+func (l *PositionedLink) BareFragment() string {
+	if l.URL[0] == '#' {
+		return l.URL[1:]
+	} else {
+		return ""
+	}
 }
 
 func init() {
@@ -189,10 +216,11 @@ func (p *PDFPages) Marshal(w io.Writer) (int, error) {
 }
 
 type PDFPage struct {
-	OwnRef *PDFObjRef
-	Links  []*PositionedLink
-	Height float64
-	Raw    string
+	OwnRef  *PDFObjRef
+	Links   []*PositionedLink
+	Objects map[string]*PositionedObject
+	Height  float64
+	Raw     string
 }
 
 func UnmarshalPDFPage(r io.Reader) (*PDFPage, error) {
@@ -214,9 +242,23 @@ func UnmarshalPDFPage(r io.Reader) (*PDFPage, error) {
 func (p *PDFPage) Marshal(w io.Writer) (int, error) {
 	b := strings.Builder{}
 	for _, l := range p.Links {
+		bareFragLink := l.BareFragment()
+		var action string
+		if bareFragLink != "" {
+			t := p.Objects[bareFragLink]
+			if t == nil {
+				action = ""
+				log.Printf("link '%s' points to non-existing object", l.URL)
+			} else {
+				action = fmt.Sprintf("/GoTo /D [ %d %d R /FitR %f %f %f %f ]",
+					p.OwnRef.ID, p.OwnRef.Gen, t.X*0.75, p.Height-(t.H+t.Y)*0.75, (t.W+t.X)*0.75, p.Height-t.Y*0.75)
+			}
+		} else {
+			action = "/URI /URI (" + l.URL + ")"
+		}
 		b.WriteString(fmt.Sprintf(
-			` << /Type /Annot /Subtype /Link /Border [ 0 0 0 ] /A << /S /URI /URI (%s) >> /Rect [ %f %f %f %f] >> `,
-			l.URL, l.X*0.75, p.Height-l.Y*0.75, (l.W+l.X)*0.75, p.Height-(l.H+l.Y)*0.75,
+			` << /Type /Annot /Subtype /Link /Border [ 0 0 0 ] /A << /S %s >> /Rect [ %f %f %f %f ] >> `,
+			action, l.X*0.75, p.Height-l.Y*0.75, (l.W+l.X)*0.75, p.Height-(l.H+l.Y)*0.75,
 		))
 	}
 	s := regexp.MustCompile(">>$").ReplaceAllStringFunc(p.Raw, func(s string) string {
@@ -308,7 +350,7 @@ func (x *PDFXref) Marshal(w io.Writer) (int, error) {
 
 // addLinksToPDF incrementally updates the PDF output of inkscape to add
 // clickable links
-func addLinksToPDF(f io.ReadWriteSeeker, links []*PositionedLink) error {
+func addLinksToPDF(f io.ReadWriteSeeker, allObjects map[string]*PositionedObject, links []*PositionedLink) error {
 	var err error
 	startxrefRegexp := regexp.MustCompile(`(?m)^startxref\s+(\d+)`)
 
@@ -354,9 +396,10 @@ func addLinksToPDF(f io.ReadWriteSeeker, links []*PositionedLink) error {
 	}
 	page1.OwnRef = pages.Page1Ref
 
-	// Update the page 1 with the new links
+	// Update the page 1 with the new links and objects
 
 	page1.Links = links
+	page1.Objects = allObjects
 
 	// Write new catalog, pages, and page 1
 
@@ -458,35 +501,38 @@ func main() {
 		log.Fatal(err)
 	}
 	bboxMatches := bboxRegexp.FindAllStringSubmatch(string(inkBBoxOut), -1)
-	bboxMap := map[string][]string{}
+
+	// Parse all bounding box as objects
+	allObjects := map[string]*PositionedObject{}
 
 	for _, bb := range bboxMatches {
-		bboxMap[bb[1]] = bb
+		o := PositionedObject{ID: bb[1]}
+		o.X, err = strconv.ParseFloat(bb[2], 64)
+		if err != nil {
+			log.Printf("inkscape gave us '%s' which is invalid as X for id '%s' - ignoring object", bb[2], o.ID)
+			continue
+		}
+		o.Y, err = strconv.ParseFloat(bb[3], 64)
+		if err != nil {
+			log.Printf("inkscape gave us '%s' which is invalid as Y for '%s' - ignoring object", bb[3], o.ID)
+			continue
+		}
+		o.W, err = strconv.ParseFloat(bb[4], 64)
+		if err != nil {
+			log.Printf("inkscape gave us '%s' which is invalid as W for '%s' - ignoring object", bb[4], o.ID)
+			continue
+		}
+		o.H, err = strconv.ParseFloat(bb[5], 64)
+		if err != nil {
+			log.Printf("inkscape gave us '%s' which is invalid as W for '%s' - ignoring object", bb[5], o.ID)
+			continue
+		}
+		allObjects[o.ID] = &o
 	}
 
 	for _, l := range links {
-		var err error
-		if bb, ok := bboxMap[l.ID]; ok {
-			l.X, err = strconv.ParseFloat(bb[2], 64)
-			if err != nil {
-				log.Printf("inkscape gave us '%s' which is invalid as X for '%s' - ignoring link", bb[2], l.URL)
-				continue
-			}
-			l.Y, err = strconv.ParseFloat(bb[3], 64)
-			if err != nil {
-				log.Printf("inkscape gave us '%s' which is invalid as Y for '%s' - ignoring link", bb[3], l.URL)
-				continue
-			}
-			l.W, err = strconv.ParseFloat(bb[4], 64)
-			if err != nil {
-				log.Printf("inkscape gave us '%s' which is invalid as W for '%s' - ignoring link", bb[4], l.URL)
-				continue
-			}
-			l.H, err = strconv.ParseFloat(bb[5], 64)
-			if err != nil {
-				log.Printf("inkscape gave us '%s' which is invalid as W for '%s' - ignoring link", bb[5], l.URL)
-				continue
-			}
+		if o, ok := allObjects[l.ID]; ok {
+			l.X, l.Y, l.W, l.H = o.X, o.Y, o.W, o.H
 			l.Valid = true
 		} else {
 			log.Print("inkscape didn't tell us the bounding box for link '%s' - ignoring link", l.URL)
@@ -518,7 +564,7 @@ func main() {
 			log.Fatal(err)
 		}
 		defer f.Close()
-		if err := addLinksToPDF(f, validLinks); err != nil {
+		if err := addLinksToPDF(f, allObjects, validLinks); err != nil {
 			log.Fatal(err)
 		}
 	}()
