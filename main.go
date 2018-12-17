@@ -17,6 +17,7 @@ var (
 	inkscapePath *string
 	inputPath    string
 	outputPath   string
+	exportDPI    = flag.Int("dpi", 96, "Resolution for rasterization of filters")
 
 	log = _log.New(os.Stderr, "", 0)
 
@@ -550,8 +551,12 @@ func main() {
 	}
 
 	// Generate the PDF
-
-	if err := exec.Command(*inkscapePath, "--export-pdf", outputPath, inputPath).Run(); err != nil {
+	args := []string{
+		"--export-dpi", strconv.Itoa(*exportDPI),
+		"--export-pdf", outputPath,
+		inputPath,
+	}
+	if err := exec.Command(*inkscapePath, args...).Run(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			os.Stderr.Write(exitErr.Stderr)
 			log.Fatal("inkscape errored while generating PDF")
