@@ -91,7 +91,7 @@ convert your SVG file.
 If the hyper link is '#some-id', an internal link is created which when
 clicked, will pan and zoom onto the object with id 'some-id'.
 
-Usage: svglinkify input.svg output.pdf [options]
+Usage: svglinkify [options] input.svg output.pdf
 
 `)
 		flag.PrintDefaults()
