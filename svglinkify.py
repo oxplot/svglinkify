@@ -58,8 +58,16 @@ def main():
     }
 
     svg_tag = re.search(r"<svg[^>]*>", svg_content).group(0)
-    svg_width = re.search(r'\bwidth\s*=\s*"([^"]+)"', svg_tag).group(1)
-    svg_height = re.search(r'\bheight\s*=\s*"([^"]+)"', svg_tag).group(1)
+    svg_width, svg_width_unit = re.search(
+        r'\bwidth\s*=\s*"([0-9.]+)(px|pt|mm|pc|cm|in)?"', svg_tag
+    ).groups()
+    if not svg_width_unit:
+        svg_width_unit = "px"
+    svg_height, svg_height_unit = re.search(
+        r'\bheight\s*=\s*"([0-9.]+)(px|pt|mm|pc|cm|in)?"', svg_tag
+    ).groups()
+    if not svg_height_unit:
+        svg_height_unit = "px"
     svg_viewbox_x, svg_viewbox_y, svg_viewbox_w, svg_viewbox_h = [
         float(v)
         for v in re.search(
@@ -67,8 +75,8 @@ def main():
             svg_tag,
         ).groups()
     ]
-    svg_width_pixels = unit_2_px[svg_width[-2:]] * float(svg_width[:-2])
-    svg_height_pixels = unit_2_px[svg_height[-2:]] * float(svg_height[:-2])
+    svg_width_pixels = unit_2_px[svg_width_unit] * float(svg_width)
+    svg_height_pixels = unit_2_px[svg_height_unit] * float(svg_height)
     x_scale = svg_width_pixels / svg_viewbox_w
     y_scale = svg_height_pixels / svg_viewbox_h
 
