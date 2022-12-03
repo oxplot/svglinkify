@@ -110,7 +110,7 @@ def main():
     proc = Popen([inkscape_path, "-S", input_svg_path], stdout=PIPE, stderr=PIPE)
     out, err = [v.decode("utf8") for v in proc.communicate()]
     if "ERROR" in err or ("WARNING" not in err and proc.returncode != 0):
-        raise Error("inkscape: " + err.decode("utf8"))
+        raise Error("inkscape: " + err)
     for i in re.findall(
         r"^([^,]+),([0-9.]+),([0-9.]+),([0-9.]+),([0-9.]+)$", out, re.MULTILINE
     ):
