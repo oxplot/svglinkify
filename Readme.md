@@ -1,6 +1,7 @@
 Export Inkscape SVGs to PDF while preserving hyperlinks (including
 internally linked fragment links).
 
+Install it from AUR: `yay -S svglinkify-git`
 
 This script depends on recent versions of:
 
